@@ -1,0 +1,10 @@
+[Unit]
+Description=mplayerRadio Service
+ 
+[Service]
+Type=forking
+ExecStart=
+ExecReload=/bin/bash $jarPath restart
+ExecStop=/bin/bash $jarPath  stop
+Restart=on-failure
+PrivateTmp=true
