@@ -48,5 +48,4 @@ void OLED_ShowNum(u8 x,u8 y,u32 num,u8 len,u8 size);
 //*p:字符串起始地址
 void OLED_ShowString(u8 x,u8 y,const u8 *p,u8 size);
 
-
 #endif

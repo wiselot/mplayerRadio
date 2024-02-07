@@ -14,6 +14,7 @@
 #define BUTTON_3_PIN     24
 #define BUTTON_4_PIN     25
 #define BUTTON_5_PIN     26
+#define BUTTON_6_PIN     29
 
 // 退出
 #define RADIO_EXIT_BUTTON  	BUTTON_0_PIN
@@ -27,5 +28,7 @@
 #define RADIO_VOLUP_BUTTON  BUTTON_4_PIN
 // 音量-
 #define RADIO_VOLDN_BUTTON  BUTTON_5_PIN
+// 菜单(选台)
+#define RADIO_MENU_BUTTON   BUTTON_6_PIN
 
 #endif
