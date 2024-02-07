@@ -296,7 +296,7 @@ int main(int argc,char **argv)
 		char fifo_buf[64];
 		sprintf(fifo_buf,"file=%s","cmd");
 		// when we can use '+' operater,that's better!(C++)
-		execlp("mplayer","mplayer","-slave","-quiet","-input",fifo_buf,radio_url_list[0],NULL);
+		execlp("mplayer","mplayer","-slave","-quiet","-idle","-input",fifo_buf,radio_url_list[0],NULL);
 	}
 	else{
 		pthread_t tid1;
