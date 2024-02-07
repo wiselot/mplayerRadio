@@ -12,6 +12,8 @@
 #define BUTTON_1_PIN     22
 #define BUTTON_2_PIN     23
 #define BUTTON_3_PIN     24
+#define BUTTON_4_PIN     25
+#define BUTTON_5_PIN     26
 
 // 退出
 #define RADIO_EXIT_BUTTON  	BUTTON_0_PIN
@@ -21,5 +23,9 @@
 #define RADIO_PRE_BUTTON	BUTTON_2_PIN
 // 暂停/播放
 #define RADIO_ENTER_BUTTON  BUTTON_3_PIN
+// 音量+
+#define RADIO_VOLUP_BUTTON  BUTTON_4_PIN
+// 音量-
+#define RADIO_VOLDN_BUTTON  BUTTON_5_PIN
 
 #endif

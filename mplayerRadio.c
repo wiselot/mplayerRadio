@@ -21,6 +21,7 @@ static int mplayer_stat = 0;
 static char **radio_url_list = (char **)NULL;
 static int radio_num = 0;
 static int radio_now = 0;
+static int radio_volume = 4;
 
 static void main_report_info(char *tip,char *oled_msg,char *con_msg){
 	if(oled_msg){
@@ -66,24 +67,24 @@ static void *get_pthread(void *arg)
 		// 简化,按键检测应该结合中断
 
 		if(!digitalRead(RADIO_EXIT_BUTTON)){
-      sleep(0.1);
-      if(!digitalRead(RADIO_EXIT_BUTTON)){
+			sleep(0.1);
+			if(!digitalRead(RADIO_EXIT_BUTTON)){
 				// stop
 				doWrite = 1;
 				strcpy(buf,"stop\n");
 			}
 		}
 		if(!digitalRead(RADIO_ENTER_BUTTON)){
-      sleep(0.1);
-      if(!digitalRead(RADIO_ENTER_BUTTON)){
+			sleep(0.1);
+			if(!digitalRead(RADIO_ENTER_BUTTON)){
 				// pause
 				doWrite = 1;
 				strcpy(buf,"pause\n");
 			}
 		}
 		if(!digitalRead(RADIO_NEXT_BUTTON)){
-      sleep(0.1);
-      if(!digitalRead(RADIO_NEXT_BUTTON)){
+			sleep(0.1);
+			if(!digitalRead(RADIO_NEXT_BUTTON)){
 				// next
 				doWrite = 1;
 				if(++radio_now >= radio_num)	radio_now = 0;
@@ -91,12 +92,32 @@ static void *get_pthread(void *arg)
 			}
 		}
 		if(!digitalRead(RADIO_PRE_BUTTON)){
-      sleep(0.1);
-      if(!digitalRead(RADIO_PRE_BUTTON)){
+			sleep(0.1);
+			if(!digitalRead(RADIO_PRE_BUTTON)){
 				// front
 				doWrite = 1;
 				if(--radio_now < 0)	radio_now = radio_num - 1;
 				sprintf(buf,"load %s\n",radio_url_list[radio_now]);
+			}
+		}
+		if(!digitalRead(RADIO_VOLUP_BUTTON)){
+			sleep(0.1);
+			if(!digitalRead(RADIO_VOLUP_BUTTON)){
+				// volume up
+				if(radio_volume<4){
+					sprintf(buf,"volume %d 1\n",++radio_volume*25);
+					doWrite = 1;
+				}
+			}
+		}
+		if(!digitalRead(RADIO_VOLDN_BUTTON)){
+			sleep(0.1);
+			if(!digitalRead(RADIO_VOLDN_BUTTON)){
+				// volume down
+				if(radio_volume>0){
+					sprintf(buf,"volume %d 1\n",--radio_volume*25);
+					doWrite = 1;
+				}
 			}
 		}
 		if(doWrite){
@@ -190,6 +211,8 @@ int main(int argc,char **argv)
 	pullUpDnControl(BUTTON_1_PIN,PUD_UP);
 	pullUpDnControl(BUTTON_2_PIN,PUD_UP);
 	pullUpDnControl(BUTTON_3_PIN,PUD_UP);
+	pullUpDnControl(BUTTON_4_PIN,PUD_UP);
+	pullUpDnControl(BUTTON_5_PIN,PUD_UP);
 
 	// 欢迎
 	OLED_ShowString(0,16,(const u8 *)(" WECLOME!"),24);
@@ -310,6 +333,9 @@ int main(int argc,char **argv)
 			}
 		}
 		printf("Return mainThread:Radio");
+		OLED_Clear();
+		OLED_ShowString(24,16,(const u8 *)("BYE!"),24);
+		OLED_Refresh_Gram();
 		sleep(MPLAYER_RADIO_WAIT_SEC);
 		fflush(stdout);
 		return err;
