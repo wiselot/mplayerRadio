@@ -17,13 +17,31 @@
 
 static int fd_fifo;
 static int fd_pipe[2];
-static int mplayer_stat = 0;
-static int radio_stat = 0;
+/* stat = 
+-1: mplayer加载中(或空载)
+0:  mplayer运行中
+1:  mplayer退出
+*/
+static int mplayer_stat = -1;
+static int mplayer_start_sign = 0;
 static char **radio_url_list = (char **)NULL;
 static char **radio_name_list = (char **)NULL;
 static int radio_num = 0;
 static int radio_now = 0;
-static int radio_volume = 4;
+static int doWrite = 0;
+
+static const char * _dataHead_st = "\nICY Info: StreamTitle=";
+static int _dataHeadLen_st = strlen("\nICY Info: StreamTitle=");
+
+static const char * _cmdContent_al = "get_time_length";
+static const char * _dataHead_al = "ANS_LENGTH=";
+static int _dataHeadLen_al = strlen("ANS_LENGTH=");
+
+static const char * _cmdContent_atp = "get_time_pos";
+static const char *_dataHead_atp = "ANS_TIME_POSITION=";
+static int _dataHeadLen_atp = strlen("ANS_TIME_POSITION=");
+
+static struct mplayerRetData radioGetData;
 
 static void main_report_info(char *tip,char *oled_msg,char *con_msg){
 	if(oled_msg){
@@ -44,9 +62,29 @@ static void main_report_error(char *tip,char *oled_msg,char *con_msg)
 
 static void refresh_radio_panel(){
 	OLED_Clear();
+	/* 过于丑陋,仅作为测试
 	OLED_ShowString(0,0,(const u8*)"Now playing:",16);
 	if(radio_name_list[radio_now])
 		OLED_ShowString(4,20,(const u8*)radio_name_list[radio_now],12);
+	*/
+	OLED_ShowString(0,0,(const u8*)"     ~~ Radio ~~",12);
+	if(radioGetData.streamTitle!=NULL && strcmp(radioGetData.streamTitle,"")){
+		OLED_ShowString(4,20,(const u8*)radioGetData.streamTitle,12);
+	}
+	else{
+		OLED_ShowString(4,20,(const u8*)radio_name_list[radio_now],12);
+	}
+	OLED_Refresh_Gram();
+}
+
+static void refresh_radio_time_pos(){
+	OLED_Fill(0,50,127,63,0);
+	char _t[21];
+	int t_len = radioGetData.time.length;
+	int t_pos = radioGetData.time.pos;
+	sprintf(_t,"  %02d:%02d:%02d / %02d:%02d:%02d",t_pos/3600,(t_pos%3600)/60,t_pos%60,
+													t_len/3600,(t_len%3600)/60,t_len%60);
+	OLED_ShowString(0,51,(const u8*)_t,12);
 	OLED_Refresh_Gram();
 }
 
@@ -68,27 +106,40 @@ static int min(int x,int y){
 
 static void *get_pthread(void *arg)
 {
-	char buf[512];
-	int doWrite = 0;
+	char buf[MPLAYER_RADIO_MESSAGE_SIZE];
 	int menu_index = 0;
 	char menu_choose[64];
 	int _doWrite = 0;
-	while(mplayer_stat==0)
+
+	int radio_stat = 0;
+
+	int _doNextRadio = 0;
+	int _doPreRadio = 0;
+	int radio_volume = 4;
+
+	memset(buf,0,sizeof(buf));
+	// 应该可以做成任务队列,这样写太麻烦,而且可以顺便获取mplayer返回
+	while(mplayer_stat<=0)
 	{
+		if(mplayer_stat<0 && !mplayer_start_sign){
+			sleep(MPLAYER_RADIO_RUN_WAIT);
+			continue;
+		}
 		//  还应该分析mplayer的返回数据,这里先放着
 		// 简化,按键检测应该结合中断
 		if(radio_stat==0){
 			// 播放主页
-			if(!digitalRead(RADIO_EXIT_BUTTON)){
-				sleep(0.05);
-				if(!digitalRead(RADIO_EXIT_BUTTON)){
-					// stop
-					doWrite = 1;
-					strcpy(buf,"stop\n");
+			//refresh_radio_time_pos();
+			if(!digitalRead(RADIO_MENU_BUTTON)){
+				sleep(0.01);
+				if(!digitalRead(RADIO_MENU_BUTTON)){
+					// 选台
+					radio_stat = 1;
+					_doWrite = 1;
 				}
 			}
 			if(!digitalRead(RADIO_ENTER_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_ENTER_BUTTON)){
 					// pause
 					doWrite = 1;
@@ -96,25 +147,21 @@ static void *get_pthread(void *arg)
 				}
 			}
 			if(!digitalRead(RADIO_NEXT_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_NEXT_BUTTON)){
 					// next
-					doWrite = 1;
-					if(++radio_now >= radio_num)	radio_now = 0;
-					sprintf(buf,"load %s\n",radio_url_list[radio_now]);
+					_doNextRadio = 1;
 				}
 			}
 			if(!digitalRead(RADIO_PRE_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_PRE_BUTTON)){
 					// front
-					doWrite = 1;
-					if(--radio_now < 0)	radio_now = radio_num - 1;
-					sprintf(buf,"load %s\n",radio_url_list[radio_now]);
+					_doPreRadio = 1;
 				}
 			}
 			if(!digitalRead(RADIO_VOLUP_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_VOLUP_BUTTON)){
 					// volume up
 					if(radio_volume<4){
@@ -124,7 +171,7 @@ static void *get_pthread(void *arg)
 				}
 			}
 			if(!digitalRead(RADIO_VOLDN_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_VOLDN_BUTTON)){
 					// volume down
 					if(radio_volume>0){
@@ -133,16 +180,21 @@ static void *get_pthread(void *arg)
 					}
 				}
 			}
-			if(!digitalRead(RADIO_MENU_BUTTON)){
-				sleep(0.05);
-				if(!digitalRead(RADIO_MENU_BUTTON)){
-					// 选台
-					radio_stat = 1;
+			if(!digitalRead(RADIO_EXIT_BUTTON)){
+				sleep(0.01);
+				if(!digitalRead(RADIO_EXIT_BUTTON)){
+					// stop
+					doWrite = 1;
+					#ifdef MPLAYER_RADIO_QUIT
+					strcpy(buf,"stop\n");
+					#else
+					strcpy(buf,"quit\n"); // 不退出
+					#endif
 				}
 			}
 		}
 		else if(radio_stat==1){
-			// 选台模式
+			// 选台模式内部刷新
 			if(_doWrite){
 				_doWrite = 0;
 				OLED_Clear();
@@ -151,55 +203,96 @@ static void *get_pthread(void *arg)
 				int i;
 				for(i=menu_index;i< menu_index + min(PANEL_HEIGHT_FONT_NUM-1,radio_num-menu_index);i++){
 					snprintf(menu_choose,PANEL_WIDTH_FONT_NUM,"[%d]%s",i,radio_name_list[i]);
-					OLED_ShowString(0,(i-menu_index)*12,(const u8*)menu_choose,12);
+					OLED_ShowString(0,(i-menu_index+1)*12,(const u8*)menu_choose,12);
 				}
 				OLED_Refresh_Gram();
 			}
 			if(!digitalRead(RADIO_NEXT_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_NEXT_BUTTON)){
 					// 下一项
 					_doWrite = 1;
 					if(++menu_index >= radio_num)	menu_index = 0;
+					_doNextRadio = 1;
 				}
 			}
 			if(!digitalRead(RADIO_PRE_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_PRE_BUTTON)){
 					// 上一项
 					_doWrite = 1;
 					if(--menu_index < 0)	menu_index = radio_num - 1;
+					_doPreRadio = 1;
 				}
 			}
 			if(!digitalRead(RADIO_MENU_BUTTON)){
-				sleep(0.05);
+				sleep(0.01);
 				if(!digitalRead(RADIO_MENU_BUTTON)){
 					// 退出菜单
 					radio_stat = 0;
+					doWrite = 1;
+					memset(buf,0,sizeof(buf));
 				}
 			}
 
 		}
+		if(_doNextRadio){
+			doWrite = 1;
+			if(++radio_now >= radio_num)	radio_now = 0;
+			sprintf(buf,"load %s\n",radio_url_list[radio_now]);
+			_doNextRadio = 0;
+		}
+		if(_doPreRadio){
+			doWrite = 1;
+			if(--radio_now < 0)	radio_now = radio_num - 1;
+			sprintf(buf,"load %s\n",radio_url_list[radio_now]);
+			_doPreRadio = 0;
+		}
 		if(doWrite){
-			refresh_radio_panel();
-			if(write(fd_fifo,buf,strlen(buf))!=strlen(buf)){
+			// 播放器页面刷新
+			doWrite = 0;
+			if(radio_stat == 0) refresh_radio_panel();
+			int _err = 0;
+			_err |= (write(fd_fifo,buf,strlen(buf))!=strlen(buf));
+			/* 这样写会命令只能执行最后一个(或者一个执行不了?) */
+			//_err |= (write(fd_fifo,_cmdContent_al,strlen(_cmdContent_al)!=strlen(_cmdContent_al)));
+			//_err |= (write(fd_fifo,_cmdContent_atp,strlen(_cmdContent_atp))!=strlen(_cmdContent_atp));
+			if(_err){
 				printf("CMD Write failed!");
 				perror("write");
 			}
-			doWrite = 0;
+			
 		}
 	}
 }
 
 static void *print_pthread(void *arg)
 {
-	char buf[512];
+	char buf[MPLAYER_RADIO_MESSAGE_SIZE];
 	close(fd_pipe[1]);
 	int size=0;
-	while(mplayer_stat==0)
+	while(mplayer_stat<=0)
 	{
 		size=read(fd_pipe[0],buf,sizeof(buf));
 		buf[size]='\0';
+		// mplayer 负载启动
+		if(size)	mplayer_start_sign = 1;
+		// ICY Info: StreamTitle='Eliza Rose & Calvin Harris - Body Moving';
+		if(!strncmp(buf,_dataHead_st,_dataHeadLen_st)){
+			if(!radioGetData.streamTitle)	free(radioGetData.streamTitle);
+			radioGetData.streamTitle = (char *)malloc(size);
+			sscanf(buf,"\nICY Info: StreamTitle='%[^']'",radioGetData.streamTitle);
+			// 触发panel更新
+			refresh_radio_panel();
+		}
+		// ANS_LENGTH=268.00
+		else if(!strncmp(buf,_dataHead_al,_dataHeadLen_al)){
+			radioGetData.time.length = (int)atof((char*)buf[_dataHeadLen_al]);
+		}
+		// ANS_TIME_POSITION=1728.6
+		else if(!strncmp(buf,_dataHead_atp,_dataHeadLen_atp)){
+			radioGetData.time.pos = (int)atof((char *)buf[_dataHeadLen_atp]);
+		}
 		printf("Mplayer return: %s\n",buf);
 	}
 }
@@ -366,7 +459,9 @@ int main(int argc,char **argv)
 		char fifo_buf[64];
 		sprintf(fifo_buf,"file=%s","cmd");
 		// when we can use '+' operater,that's better!(C++)
-		execlp("mplayer","mplayer","-slave","-quiet","-idle","-input",fifo_buf,radio_url_list[0],NULL);
+		execlp("mplayer","mplayer","-slave","-quiet","-idle","-input",fifo_buf,\
+			radio_url_list[0],
+			NULL);
 	}
 	else{
 		pthread_t tid1;
