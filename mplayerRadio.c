@@ -15,35 +15,84 @@
 #include "oled.h"
 #include "radio.h"
 
+// mplayer通信通道
 static int fd_fifo;
 static int fd_pipe[2];
-/* stat = 
+/* mplayer 状态 
+stat = 
 -1: mplayer加载中(或空载)
 0:  mplayer运行中
 1:  mplayer退出
 */
 static int mplayer_stat = -1;
+// mplayer 启动触发按键检测
 static int mplayer_start_sign = 0;
+// 电台url表
 static char **radio_url_list = (char **)NULL;
+// 电台name表
 static char **radio_name_list = (char **)NULL;
+// 电台总数
 static int radio_num = 0;
+// 当前电台
 static int radio_now = 0;
+// 执行panel刷新标志
 static int doWrite = 0;
-
+// 获取StreamTitle 数据头
 static const char * _dataHead_st = "\nICY Info: StreamTitle=";
 static int _dataHeadLen_st = strlen("\nICY Info: StreamTitle=");
 
+// 获取 总长(s) 指令
 static const char * _cmdContent_al = "get_time_length";
+// 获取 总长(s) 数据头
 static const char * _dataHead_al = "ANS_LENGTH=";
 static int _dataHeadLen_al = strlen("ANS_LENGTH=");
 
+// 获取 当前位置 指令
 static const char * _cmdContent_atp = "get_time_pos";
+// 获取 当前位置 数据头
 static const char *_dataHead_atp = "ANS_TIME_POSITION=";
 static int _dataHeadLen_atp = strlen("ANS_TIME_POSITION=");
 
+/* 从 mplayer 获得的数据
+ * 好吧,确实应该用消息队列写
+ */
 static struct mplayerRetData radioGetData;
 
-static void main_report_info(char *tip,char *oled_msg,char *con_msg){
+/* 电台展示名
+ * 显示 'StreamTitle' 优先于 'radio_name'
+ */
+static char streamTitle_disp[64];
+
+/* 打印日志
+ * 打印oled_msg至oled,con_msg至stdout(不为NULL时)
+*/
+static void main_report_info(char *tip,char *oled_msg,char *con_msg);
+/* 打印错误日志并延时
+ * 打印oled_msg至oled,con_msg至stdout(不为NULL时) ,再延时
+*/
+static void main_report_error(char *tip,char *oled_msg,char *con_msg);
+/*  刷新播放面板(处于菜单模式不刷新)
+*/
+static void refresh_radio_panel();
+/* 刷新进度条(处于菜单模式不刷新)
+ * 现在不会显示
+*/
+static void refresh_radio_time_pos();
+// 去除fgets获得的讨厌的'\n'
+static int deleteFgetsN(char *p);
+// 比较两个int型的大小
+static int min(int x,int y);
+// 掌管按键响应,面板刷新,命令发送的神
+static void *get_pthread(void *arg);
+// 掌管mplayer返回数据处理的神
+static void *print_pthread(void *arg);
+// 从gitee更新资源仓库
+static int do_git_update();
+// 加载资源描述文档
+static int load_radio_list(FILE *fp);
+
+static void main_report_info(char *tip,char *oled_msg,char *con_msg)
+{
 	if(oled_msg){
 		OLED_Clear();
 		OLED_ShowString(0,0,(const u8*)oled_msg,12);
@@ -60,24 +109,22 @@ static void main_report_error(char *tip,char *oled_msg,char *con_msg)
 	sleep(MPLAYER_RADIO_WAIT_SEC);
 }
 
-static void refresh_radio_panel(){
+static void refresh_radio_panel()
+{
 	OLED_Clear();
-	/* 过于丑陋,仅作为测试
-	OLED_ShowString(0,0,(const u8*)"Now playing:",16);
-	if(radio_name_list[radio_now])
-		OLED_ShowString(4,20,(const u8*)radio_name_list[radio_now],12);
-	*/
 	OLED_ShowString(0,0,(const u8*)"     ~~ Radio ~~",12);
 	if(radioGetData.streamTitle!=NULL && strcmp(radioGetData.streamTitle,"")){
-		OLED_ShowString(4,20,(const u8*)radioGetData.streamTitle,12);
+		strncpy(streamTitle_disp,radioGetData.streamTitle,sizeof(streamTitle_disp));
 	}
 	else{
-		OLED_ShowString(4,20,(const u8*)radio_name_list[radio_now],12);
+		strncpy(streamTitle_disp,radio_name_list[radio_now],sizeof(streamTitle_disp));
 	}
+	OLED_ShowString(0,20,(const u8*)streamTitle_disp,12);
 	OLED_Refresh_Gram();
 }
 
-static void refresh_radio_time_pos(){
+static void refresh_radio_time_pos()
+{
 	OLED_Fill(0,50,127,63,0);
 	char _t[21];
 	int t_len = radioGetData.time.length;
@@ -88,7 +135,8 @@ static void refresh_radio_time_pos(){
 	OLED_Refresh_Gram();
 }
 
-static int deleteFgetsN(char *p){
+static int deleteFgetsN(char *p)
+{
 	char *find = strchr(p, '\n');
 	if(find){
 		*find = '\0';
@@ -97,10 +145,8 @@ static int deleteFgetsN(char *p){
 	return 0;
 }
 
-#define PANEL_WIDTH_FONT_NUM	21
-#define PANEL_HEIGHT_FONT_NUM	5
-
-static int min(int x,int y){
+static int min(int x,int y)
+{
 	return (x<y)?x:y;
 }
 
@@ -253,7 +299,7 @@ static void *get_pthread(void *arg)
 			doWrite = 0;
 			if(radio_stat == 0) refresh_radio_panel();
 			int _err = 0;
-			_err |= (write(fd_fifo,buf,strlen(buf))!=strlen(buf));
+			 _err |= (write(fd_fifo,buf,strlen(buf))!=strlen(buf));
 			/* 这样写会命令只能执行最后一个(或者一个执行不了?) */
 			//_err |= (write(fd_fifo,_cmdContent_al,strlen(_cmdContent_al)!=strlen(_cmdContent_al)));
 			//_err |= (write(fd_fifo,_cmdContent_atp,strlen(_cmdContent_atp))!=strlen(_cmdContent_atp));
@@ -297,7 +343,8 @@ static void *print_pthread(void *arg)
 	}
 }
 
-static int do_git_update(){
+static int do_git_update()
+{
 	int err;
 	/*
 	if(!(err = chdir(MPLAYER_RADIO_RES_UPDATE_PATH))){
@@ -314,7 +361,8 @@ static int do_git_update(){
 	return 0;
 }
 
-static int load_radio_list(FILE *fp){
+static int load_radio_list(FILE *fp)
+{
 	if(!fp)	return 1;
 	// 第一行数量
 	char buf[512];
@@ -366,6 +414,12 @@ int main(int argc,char **argv)
 	pullUpDnControl(BUTTON_4_PIN,PUD_UP);
 	pullUpDnControl(BUTTON_5_PIN,PUD_UP);
 	pullUpDnControl(BUTTON_6_PIN,PUD_UP);
+
+	// 歌名初始化
+	memset(streamTitle_disp,0,sizeof(streamTitle_disp));
+	streamTitle_disp[63] = '.';
+	streamTitle_disp[62] = '.';
+	streamTitle_disp[61] = '.';
 
 	// 欢迎
 	OLED_ShowString(0,16,(const u8 *)(" WECLOME!"),24);
