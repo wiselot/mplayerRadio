@@ -297,6 +297,7 @@ static void *get_pthread(void *arg)
 		if(doWrite){
 			// 播放器页面刷新
 			doWrite = 0;
+			radioGetData.streamTitle = NULL;
 			if(radio_stat == 0) refresh_radio_panel();
 			int _err = 0;
 			 _err |= (write(fd_fifo,buf,strlen(buf))!=strlen(buf));
