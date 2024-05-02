@@ -37,6 +37,8 @@ static int radio_num = 0;
 static int radio_now = 0;
 // 执行panel刷新标志
 static int doWrite = 0;
+// 菜单or面板
+static int radio_stat = 0;
 // 获取StreamTitle 数据头
 static const char * _dataHead_st = "\nICY Info: StreamTitle=";
 static int _dataHeadLen_st = strlen("\nICY Info: StreamTitle=");
@@ -62,6 +64,7 @@ static struct mplayerRetData radioGetData;
  * 显示 'StreamTitle' 优先于 'radio_name'
  */
 static char streamTitle_disp[64];
+static char steamTitle_old[64];
 
 /* 打印日志
  * 打印oled_msg至oled,con_msg至stdout(不为NULL时)
@@ -90,6 +93,30 @@ static void *print_pthread(void *arg);
 static int do_git_update();
 // 加载资源描述文档
 static int load_radio_list(FILE *fp);
+// 阻塞读取按键
+static int getch_key();
+
+static int key_st[] = { RADIO_EXIT_BUTTON,
+RADIO_NEXT_BUTTON,
+RADIO_PRE_BUTTON,
+RADIO_ENTER_BUTTON,
+RADIO_VOLUP_BUTTON,
+RADIO_VOLDN_BUTTON,
+RADIO_MENU_BUTTON};
+#define KEY_NUM 7
+
+static int getch_key()
+{
+	int i;
+	while(1)
+	{
+		for(i=0;i<KEY_NUM;i++ )
+		{
+			if(!digitalRead(key_st[i]))
+			return key_st[i];
+		}
+	}
+}
 
 static void main_report_info(char *tip,char *oled_msg,char *con_msg)
 {
@@ -157,16 +184,16 @@ static void *get_pthread(void *arg)
 	char menu_choose[64];
 	int _doWrite = 0;
 
-	int radio_stat = 0;
-
 	int _doNextRadio = 0;
 	int _doPreRadio = 0;
-	int radio_volume = 4;
+	int radio_volume = 6;
 
 	memset(buf,0,sizeof(buf));
 	// 应该可以做成任务队列,这样写太麻烦,而且可以顺便获取mplayer返回
 	while(mplayer_stat<=0)
 	{
+		sleep(0.1);
+		//refresh_radio_time_pos();
 		if(mplayer_stat<0 && !mplayer_start_sign){
 			sleep(MPLAYER_RADIO_RUN_WAIT);
 			continue;
@@ -176,59 +203,39 @@ static void *get_pthread(void *arg)
 		if(radio_stat==0){
 			// 播放主页
 			//refresh_radio_time_pos();
-			if(!digitalRead(RADIO_MENU_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_MENU_BUTTON)){
-					// 选台
+			int getch;
+			switch((getch=getch_key())){
+				case RADIO_MENU_BUTTON:
+				// 选台
 					radio_stat = 1;
 					_doWrite = 1;
-				}
-			}
-			if(!digitalRead(RADIO_ENTER_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_ENTER_BUTTON)){
-					// pause
+				break;
+				case RADIO_ENTER_BUTTON:
+				// 暂停
 					doWrite = 1;
 					strcpy(buf,"pause\n");
-				}
-			}
-			if(!digitalRead(RADIO_NEXT_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_NEXT_BUTTON)){
-					// next
+				break;
+				case RADIO_NEXT_BUTTON:
+				// 下一份
 					_doNextRadio = 1;
-				}
-			}
-			if(!digitalRead(RADIO_PRE_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_PRE_BUTTON)){
-					// front
+				break;
+				case RADIO_PRE_BUTTON:
 					_doPreRadio = 1;
-				}
-			}
-			if(!digitalRead(RADIO_VOLUP_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_VOLUP_BUTTON)){
+				break;
+				case RADIO_VOLUP_BUTTON:
 					// volume up
-					if(radio_volume<4){
-						sprintf(buf,"volume %d 1\n",++radio_volume*25);
+					if(radio_volume<6){
+						sprintf(buf,"volume %d 1\n",++radio_volume*10);
 						doWrite = 1;
 					}
-				}
-			}
-			if(!digitalRead(RADIO_VOLDN_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_VOLDN_BUTTON)){
-					// volume down
+				break;
+				case RADIO_VOLDN_BUTTON:
 					if(radio_volume>0){
-						sprintf(buf,"volume %d 1\n",--radio_volume*25);
-						doWrite = 1;
+							sprintf(buf,"volume %d 1\n",--radio_volume*10);
+							doWrite = 1;
 					}
-				}
-			}
-			if(!digitalRead(RADIO_EXIT_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_EXIT_BUTTON)){
+				break;
+				case RADIO_EXIT_BUTTON:
 					// stop
 					doWrite = 1;
 					#ifdef MPLAYER_RADIO_QUIT
@@ -236,7 +243,7 @@ static void *get_pthread(void *arg)
 					#else
 					strcpy(buf,"quit\n"); // 不退出
 					#endif
-				}
+				break;
 			}
 		}
 		else if(radio_stat==1){
@@ -253,34 +260,30 @@ static void *get_pthread(void *arg)
 				}
 				OLED_Refresh_Gram();
 			}
-			if(!digitalRead(RADIO_NEXT_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_NEXT_BUTTON)){
-					// 下一项
+			int getch;
+			switch((getch=getch_key()))
+			{
+				case RADIO_NEXT_BUTTON:
 					_doWrite = 1;
 					if(++menu_index >= radio_num)	menu_index = 0;
 					_doNextRadio = 1;
-				}
-			}
-			if(!digitalRead(RADIO_PRE_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_PRE_BUTTON)){
-					// 上一项
+				break;
+				case RADIO_PRE_BUTTON:
 					_doWrite = 1;
 					if(--menu_index < 0)	menu_index = radio_num - 1;
 					_doPreRadio = 1;
-				}
-			}
-			if(!digitalRead(RADIO_MENU_BUTTON)){
-				sleep(0.01);
-				if(!digitalRead(RADIO_MENU_BUTTON)){
-					// 退出菜单
+				break;
+				case RADIO_MENU_BUTTON:
 					radio_stat = 0;
 					doWrite = 1;
 					memset(buf,0,sizeof(buf));
-				}
+				break;
+				case RADIO_EXIT_BUTTON:
+					radio_stat = 0;
+					doWrite = 0;
+					memset(buf,0,sizeof(buf));
+				break;
 			}
-
 		}
 		if(_doNextRadio){
 			doWrite = 1;
@@ -531,8 +534,10 @@ int main(int argc,char **argv)
 		}
 		pthread_create(&tid1,NULL,get_pthread,NULL);
 		pthread_create(&tid2,NULL,print_pthread,NULL);
+		//pthread_create(&tid3,NULL,loop_refresh_radio_panel,NULL);
 		pthread_detach(tid1);
 		pthread_detach(tid2);
+		//pthread_detach(tid3);
 
 		refresh_radio_panel();
 
@@ -552,6 +557,7 @@ int main(int argc,char **argv)
 				}
 			}
 		}
+		
 		printf("Return mainThread:Radio\n");
 		OLED_Clear();
 		OLED_ShowString(24,16,(const u8 *)("BYE!"),24);

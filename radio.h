@@ -29,7 +29,7 @@
 #define BUTTON_3_PIN     24
 #define BUTTON_4_PIN     25
 #define BUTTON_5_PIN     26
-#define BUTTON_6_PIN     29
+#define BUTTON_6_PIN     28
 
 // oled 一行装下的12号字体个数
 #define PANEL_WIDTH_FONT_NUM	21
