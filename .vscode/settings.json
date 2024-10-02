@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "format": "c",
+        "signal.h": "c"
+    }
+}

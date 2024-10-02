@@ -1,62 +1,24 @@
 #include "utils.h"
+#include "storage.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <pthread.h>
 #include <sqlite3.h> 
 
-static int start_storage(sqlite3 *db,char *msg);
-static int close_storage(sqlite3 *db,char *msg);
+static sqlite3 *data_db;
+static char sql_cmd[MAX_SQL_CMD_STRLEN];
+static char sql_local_time[30];
+
 static int result_callback(void *data, int argc, char **argv, char **azColName);
-static int init_storage(sqlite3 *db,char *msg);
 static int getFormatedTime(char *Time);
-
-
-/** 
- * @brief           打开存储库
- * @param db        数据库句柄
- * @param msg       错误信息存储
- *
- * @return 返回说明
- *     1 fail
- *     0 succeed
- */
-static int start_storage(sqlite3 *db,char *msg)
-{
-    if(!db) return 1;
-    if(sqlite3_open(UTILS_DEFAULT_MENU_DB,&db)!=SQLITE_OK){
-        if(msg) strcpy(msg,sqlite3_errmsg(db));
-        return 1;
-    }
-    return 0;
-}
-
-/** 
- * @brief           关闭存储库
- * @param db        数据库句柄
- * @param msg       错误信息存储
- *
- * @return 返回说明
- *     1 fail
- *     0 succeed
- */
-static int close_storage(sqlite3 *db,char *msg)
-{
-    if(!db) return 1;
-    if(sqlite3_close(db)!=SQLITE_OK){
-        if(msg) strcpy(msg,sqlite3_errmsg(db));
-        return 1;
-    }
-    return 0;
-}
-
 
 /** 
  * @brief               sqlite回调函数
  */
-static int result_callback(void *data, int argc, char **argv, char **azColName){
+static int result_callback(void *NotUsed, int argc, char **argv, char **azColName){
    int i;
-   fprintf(stderr, "%s: ", (const char*)data);
    for(i=0; i<argc; i++){
       printf("%s = %s\n", azColName[i], argv[i] ? argv[i] : "NULL");
    }
@@ -83,35 +45,62 @@ static int getFormatedTime(char *Time)
     return 0;
 }
 
-/** 
- * @brief           初始化存储库
- * @param db        数据库句柄
- * @param msg       错误信息存储
- *
- * @return 返回说明
- *     1 fail
- *     0 succeed
- */
-static int init_storage(sqlite3 *db,char *msg)
+/**
+* @brief            写入actionHistory记录
+* @param type       写入类型
+* @param details    写入细节
+* @param errMsg     返回错误信息,需要手动释放
+* @return 返回说明
+*       同sqlite3_exec的值
+*/
+int writeForm_actionHistory(actionHistoryType type,const char *details,char **errMsg)
 {
-    if(!db) return 1;
-    int ret = 0;
-    // 活动表
-    ret |= sqlite3_exec(db,DB_INIT_TABLE_ACTION_HISTORY,result_callback,0,&msg);
-    if(ret && strcmp(msg,DB_INIT_TABLE_EXISTS_MSG))
-    {
-        // 表不存在而且创建失败
-        return 1;
-    }
-    char cmd[128];
-    char time[30];
-    if(getFormatedTime(time)){
-        strcpy(time,"2024-1-1-00:00:00");
-    }
-    sprintf(cmd,"%s%s')",DB_INIT_TBALE_MSG,time);
-    ret |= sqlite3_exec(db,cmd,result_callback,0,&msg);
-    if(ret) return 1;
-    
-    return 0;
+    getFormatedTime(sql_local_time);
+    sprintf(sql_cmd,DB_INIT_TBALE_MSG,type,details?details:"(null)",sql_local_time);
+    return sqlite3_exec(data_db,sql_cmd,result_callback,NULL,errMsg);
 }
 
+/** 
+ * @brief 写入播放历史
+ * @param url       播放url
+ * @param details   细节
+ * @param errMsg    返回错误信息，需要手动释放
+ * 
+*/
+int writeForm_steamHistory(const char *url,const char *details,char **errMsg)
+{
+    getFormatedTime(sql_local_time);
+    sprintf(sql_cmd,DB_INIT_TABLE_SH_MSG,url,details?details:"(null)",sql_local_time);
+    return sqlite3_exec(data_db,sql_cmd,result_callback,NULL,errMsg);
+}
+
+/** 
+ * @brief           storage主线程
+ */
+void *storage_thread_main(void *arg)
+{
+    // 打开数据库
+    if(sqlite3_open(UTILS_DEFAULT_MENU_DB,&data_db)!=SQLITE_OK){
+        fprintf(stderr,"Storage open or created data db failed!\n");
+        pthread_exit(NULL);
+    }
+
+    // 初始化
+    char *errMsg = 0;
+    if(sqlite3_exec(data_db,DB_INIT_TABLE_ACTION_HISTORY,result_callback,NULL,&errMsg)!=SQLITE_OK ||
+        sqlite3_exec(data_db,DB_INIT_TABLE_STREAM_HISTORY,result_callback,NULL,&errMsg)!=SQLITE_OK){
+        if(errMsg && !strcmp(errMsg,DB_INIT_TABLE_EXISTS_MSG))
+            printf("Storage already inited.\n");
+        else{
+            fprintf(stderr,"Storage can't init the data db!(Get from sqlite:%s)\n",errMsg?errMsg:"null");
+            pthread_exit(NULL);
+        }
+    }
+    
+    // 写入记录
+    if(writeForm_actionHistory(STARTUP,"init",&errMsg)!=SQLITE_OK){
+        fprintf(stderr,"Storage write startup info failed!(Code:%s)\n",errMsg?errMsg:"(null)");
+        pthread_exit(NULL);
+    }
+    
+}
